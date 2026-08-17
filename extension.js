@@ -21,6 +21,31 @@ const MAX_RETRIES = 5;
 const STATUS_URL = 'https://status.claude.com/api/v2/status.json';
 const STATUS_PAGE_URL = 'https://status.claude.com';
 
+// Explicit lookup path for the `claude` binary. The extension used to run the
+// command through `bash -lc`, which sourced ~/.profile and friends inside the
+// gnome-shell process every refresh and resolved `claude` from whatever PATH
+// those files happened to build. Both are avoided by spawning directly with a
+// fixed PATH.
+const CLAUDE_PATH_DIRS = [
+    `${GLib.get_home_dir()}/.local/bin`,
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/snap/bin',
+];
+
+// Resolved against CLAUDE_PATH_DIRS rather than GLib.find_program_in_path(),
+// which would search gnome-shell's own PATH instead of the one handed to the
+// subprocess.
+function findClaudeBinary() {
+    for (const dir of CLAUDE_PATH_DIRS) {
+        const candidate = `${dir}/claude`;
+        if (GLib.file_test(candidate, GLib.FileTest.IS_EXECUTABLE))
+            return candidate;
+    }
+    return null;
+}
+
 const STATUS_COLORS = {
     none: '#2ecc71',
     minor: '#f1c40f',
@@ -307,9 +332,18 @@ class ClaudeIndicator extends PanelMenu.Button {
         let proc;
         this._cancellable = new Gio.Cancellable();
         try {
-            proc = Gio.Subprocess.new(
-                ['/bin/bash', '-lc', 'claude -p "/usage"'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+            const path = CLAUDE_PATH_DIRS.join(':');
+            const launcher = new Gio.SubprocessLauncher({
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            });
+            launcher.setenv('PATH', path, true);
+            launcher.set_cwd(GLib.get_home_dir());
+
+            const claudeBin = findClaudeBinary();
+            if (!claudeBin)
+                throw new Error(`claude binary not found in ${path}`);
+
+            proc = launcher.spawnv([claudeBin, '-p', '/usage']);
         } catch (e) {
             logError(e, 'claude-status: falha ao iniciar subprocess');
             this._refreshing = false;

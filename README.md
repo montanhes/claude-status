@@ -11,11 +11,11 @@ Clicking the panel opens a detailed dropdown, including live [Claude status](htt
 ## Requirements
 
 - GNOME Shell 45 to 50
-- [Claude Code](https://claude.com/claude-code) installed and authenticated, with the `claude` binary available in the login shell `PATH` (`bash -lc`)
+- [Claude Code](https://claude.com/claude-code) installed and authenticated, with the `claude` binary in one of `~/.local/bin`, `/usr/local/bin`, `/usr/bin`, `/bin` or `/snap/bin`
 
 ## How it works
 
-Every 5 minutes the extension runs `claude -p "/usage"` in the background, parses the output (session and weekly percentage plus reset time), and updates the panel. It also polls `status.claude.com` on the same interval and shows a color-coded indicator (green/yellow/orange/red) in the dropdown, linking out to the status page on click.
+Every 5 minutes the extension runs `claude -p "/usage"` in the background — spawned directly, with no shell in between and an explicit `PATH` — parses the output (session and weekly percentage plus reset time), and updates the panel. It also polls `status.claude.com` on the same interval and shows a color-coded indicator (green/yellow/orange/red) in the dropdown, linking out to the status page on click.
 
 If a `/usage` call fails or times out (25s watchdog), it retries with exponential backoff (15s, 30s, 45s... capped at 120s, up to 5 attempts) instead of leaving stale data on screen. No data is sent to third parties; everything runs locally through the Claude Code CLI itself, aside from the status page check.
 
