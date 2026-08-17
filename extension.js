@@ -21,6 +21,90 @@ const MAX_RETRIES = 5;
 const STATUS_URL = 'https://status.claude.com/api/v2/status.json';
 const STATUS_PAGE_URL = 'https://status.claude.com';
 
+// Explicit lookup path for the `claude` binary. The extension used to run the
+// command through `bash -lc`, which sourced ~/.profile and friends inside the
+// gnome-shell process every refresh and resolved `claude` from whatever PATH
+// those files happened to build. Both are avoided by spawning directly with a
+// fixed PATH.
+const CLAUDE_PATH_DIRS = [
+    `${GLib.get_home_dir()}/.local/bin`,
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/snap/bin',
+];
+
+// Arguments that hold the CLI to reading usage and nothing else.
+//
+//   --safe-mode              no hooks, MCP servers, plugins, custom commands or CLAUDE.md
+//   --strict-mcp-config      ignore any ambient MCP configuration
+//   --no-session-persistence no transcript written for a five-minute poll
+//   --tools ''               no tools available at all
+//
+// `/usage` is answered locally today, without a model turn, so none of this is
+// load-bearing for the feature. That is exactly why it is here: the extension
+// runs unattended every five minutes against an authenticated account, and the
+// boundary should be enforced rather than inherited from CLI behaviour that can
+// change. --tools in particular is not dead weight; it is the guarantee that a
+// future CLI reaching the model still cannot act.
+const CLAUDE_ARGS = [
+    '--safe-mode',
+    '--no-session-persistence',
+    '--strict-mcp-config',
+    '--tools', '',
+    '-p', '/usage',
+];
+
+// A CLI predating these flags exits non-zero with an unknown-option error.
+// Retrying cannot fix that, and falling back to an unhardened command would
+// defeat the point, so it becomes a visible terminal state instead.
+const UNSUPPORTED_FLAG_RE = /unknown option|unrecognized option|unknown argument/i;
+
+const STDERR_LOG_CHARS = 120;
+
+// `/usage` output carries request counts, session counts, top skills, top
+// subagents and top MCP servers. GNOME Shell logs to the journal, which is
+// persisted and readable beyond this process, so the content never goes there --
+// only its shape, which is what a parser bug actually needs. Set
+// CLAUDE_STATUS_DEBUG=1 in the gnome-shell environment to opt into the full
+// text while debugging.
+function debugEnabled() {
+    return GLib.getenv('CLAUDE_STATUS_DEBUG') === '1';
+}
+
+function describeShape(output) {
+    const text = output ?? '';
+    if (debugEnabled())
+        return text;
+    return `${text.length} chars, ${text ? text.split('\n').length : 0} lines (set CLAUDE_STATUS_DEBUG=1 for the text)`;
+}
+
+// stderr is where authentication diagnostics surface, so it is truncated to a
+// single short line rather than logged whole.
+function summarize(stderr) {
+    const text = (stderr ?? '').trim();
+    if (!text)
+        return '(no stderr)';
+    if (debugEnabled())
+        return text;
+    const firstLine = text.split('\n')[0];
+    return firstLine.length > STDERR_LOG_CHARS
+        ? `${firstLine.slice(0, STDERR_LOG_CHARS)}…`
+        : firstLine;
+}
+
+// Resolved against CLAUDE_PATH_DIRS rather than GLib.find_program_in_path(),
+// which would search gnome-shell's own PATH instead of the one handed to the
+// subprocess.
+function findClaudeBinary() {
+    for (const dir of CLAUDE_PATH_DIRS) {
+        const candidate = `${dir}/claude`;
+        if (GLib.file_test(candidate, GLib.FileTest.IS_EXECUTABLE))
+            return candidate;
+    }
+    return null;
+}
+
 const STATUS_COLORS = {
     none: '#2ecc71',
     minor: '#f1c40f',
@@ -52,7 +136,7 @@ function colorForPercent(pct) {
 }
 
 function parseResetDate(text, now) {
-    // ex: "Jul 23, 7:40pm" ou "Jul 25, 12am"
+    // e.g. "Jul 23, 7:40pm" or "Jul 25, 12am"
     const m = text.match(/([A-Za-z]{3})\s+(\d{1,2}),?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
     if (!m)
         return null;
@@ -246,6 +330,19 @@ class ClaudeIndicator extends PanelMenu.Button {
         cardsItem.add_child(cardsBox);
         this.menu.addMenuItem(cardsItem);
 
+        this._errorItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        const errorBox = new St.BoxLayout({style_class: 'claude-status-box', x_expand: true});
+        this._errorLabel = new St.Label({
+            text: '',
+            style_class: 'claude-error-label',
+            x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        errorBox.add_child(this._errorLabel);
+        this._errorItem.add_child(errorBox);
+        this._errorItem.visible = false;
+        this.menu.addMenuItem(this._errorItem);
+
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         this._statusItem = new PopupMenu.PopupBaseMenuItem();
@@ -307,11 +404,20 @@ class ClaudeIndicator extends PanelMenu.Button {
         let proc;
         this._cancellable = new Gio.Cancellable();
         try {
-            proc = Gio.Subprocess.new(
-                ['/bin/bash', '-lc', 'claude -p "/usage"'],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+            const path = CLAUDE_PATH_DIRS.join(':');
+            const launcher = new Gio.SubprocessLauncher({
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            });
+            launcher.setenv('PATH', path, true);
+            launcher.set_cwd(GLib.get_home_dir());
+
+            const claudeBin = findClaudeBinary();
+            if (!claudeBin)
+                throw new Error(`claude binary not found in ${path}`);
+
+            proc = launcher.spawnv([claudeBin, ...CLAUDE_ARGS]);
         } catch (e) {
-            logError(e, 'claude-status: falha ao iniciar subprocess');
+            logError(e, 'claude-status: failed to start the usage subprocess');
             this._refreshing = false;
             this._cancellable = null;
             this._scheduleRetry();
@@ -327,7 +433,7 @@ class ClaudeIndicator extends PanelMenu.Button {
             GLib.PRIORITY_DEFAULT, SUBPROCESS_TIMEOUT_SECONDS, () => {
                 watchdogFired = true;
                 this._watchdogId = null;
-                logError(new Error(`claude-status: comando excedeu ${SUBPROCESS_TIMEOUT_SECONDS}s, cancelando`));
+                logError(new Error(`claude-status: command exceeded ${SUBPROCESS_TIMEOUT_SECONDS}s, cancelling`));
                 this._cancellable?.cancel();
                 return GLib.SOURCE_REMOVE;
             });
@@ -346,20 +452,27 @@ class ClaudeIndicator extends PanelMenu.Button {
                 const exitStatus = source.get_exit_status();
 
                 if (exitStatus !== 0) {
+                    if (UNSUPPORTED_FLAG_RE.test(stderr ?? '')) {
+                        logError(new Error(
+                            'claude-status: CLI rejected the isolation flags; update Claude Code'));
+                        this._setUnsupportedCli();
+                        return;
+                    }
                     logError(new Error(
-                        `claude-status: comando saiu com codigo ${exitStatus}. stderr: ${(stderr ?? '').trim()}`));
+                        `claude-status: command exited with code ${exitStatus}: ${summarize(stderr)}`));
                     this._scheduleRetry();
                     return;
                 }
 
                 const parsed = parseUsage(stdout ?? '');
                 if (!parsed) {
-                    logError(new Error(`claude-status: saida inesperada: ${stdout}`));
+                    logError(new Error(`claude-status: unexpected /usage output: ${describeShape(stdout)}`));
                     this._scheduleRetry();
                     return;
                 }
 
                 this._retryCount = 0;
+                this._clearUnsupportedCli();
                 this._data = parsed;
                 this._lastUpdate = new Date();
 
@@ -368,10 +481,28 @@ class ClaudeIndicator extends PanelMenu.Button {
                 this._weekCard.setData(parsed.week.pct, parsed.week.resetText);
                 this._tick();
             } catch (e) {
-                logError(e, 'claude-status: falha ao ler saida do comando');
+                logError(e, 'claude-status: failed to read the command output');
                 this._scheduleRetry();
             }
         });
+    }
+
+    // Terminal until the CLI is updated: no backoff, no fallback to an
+    // unhardened command. The periodic refresh keeps running, so the state
+    // clears by itself once a new enough binary is installed.
+    _setUnsupportedCli() {
+        this._retryCount = 0;
+        this._data = null;
+        this._lastUpdate = null;
+        this._label.set_text(panelLabel('--%', '--%'));
+        // TRANSLATORS: shown in the dropdown when the installed Claude Code CLI does
+        // not support the flags the extension uses to restrict it to reading usage
+        this._errorLabel.set_text(_('Claude CLI too old — update required'));
+        this._errorItem.visible = true;
+    }
+
+    _clearUnsupportedCli() {
+        this._errorItem.visible = false;
     }
 
     _scheduleRetry() {
@@ -417,7 +548,7 @@ class ClaudeIndicator extends PanelMenu.Button {
             this._statusLabel.set_text(description);
         } catch (e) {
             if (!this._destroyed) {
-                logError(e, 'claude-status: falha ao consultar status.claude.com');
+                logError(e, 'claude-status: failed to query status.claude.com');
                 this._statusDot.set_style(`background-color: ${STATUS_COLORS.none};`);
                 this._statusLabel.set_text(_('Status unavailable'));
             }
