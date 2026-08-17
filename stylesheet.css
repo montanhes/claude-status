@@ -81,6 +81,12 @@
     padding-top: 2px;
 }
 
+.claude-error-label {
+    font-size: 0.9em;
+    font-weight: bold;
+    color: #e74c3c;
+}
+
 .claude-status-box {
     spacing: 8px;
     padding: 6px 10px;

@@ -13,64 +13,70 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: extension.js:32
+#: extension.js:84
 msgid "All Systems Operational"
 msgstr ""
 
-#: extension.js:33
+#: extension.js:85
 msgid "Minor Service Disruption"
 msgstr ""
 
-#: extension.js:34
+#: extension.js:86
 msgid "Major Service Disruption"
 msgstr ""
 
-#: extension.js:35
+#: extension.js:87
 msgid "Critical Service Disruption"
 msgstr ""
 
-#: extension.js:99
+#: extension.js:151
 msgctxt "short abbreviation for \"session\" shown in the top bar"
 msgid "S"
 msgstr ""
 
-#: extension.js:100
+#: extension.js:152
 msgctxt "short abbreviation for \"week\" shown in the top bar"
 msgid "W"
 msgstr ""
 
 #. TRANSLATORS: %s is a date/time string, e.g. "Jul 23, 7:40pm"
-#: extension.js:148
+#: extension.js:200
 #, javascript-format
 msgid "Resets at · %s"
 msgstr ""
 
-#: extension.js:159
+#: extension.js:211
 msgid "Claude Status"
 msgstr ""
 
-#: extension.js:236
+#: extension.js:292
 msgid "SESSION (5h)"
 msgstr ""
 
-#: extension.js:237
+#: extension.js:293
 msgid "WEEK"
 msgstr ""
 
-#: extension.js:253
+#: extension.js:322
 msgid "Checking status…"
 msgstr ""
 
 #. TRANSLATORS: %d is the number of seconds since the last refresh
-#: extension.js:288
+#: extension.js:357
 #, javascript-format
 msgid "updated %ds ago"
 msgstr ""
 
-#: extension.js:400
+#. TRANSLATORS: shown in the dropdown when the installed Claude Code CLI does
+#. not support the flags the extension uses to restrict it to reading usage
+#: extension.js:467
+msgid "Claude CLI too old — update required"
+msgstr ""
+
+#: extension.js:509
 msgid "Unknown"
 msgstr ""
 
-#: extension.js:408
+#: extension.js:520
 msgid "Status unavailable"
 msgstr ""
