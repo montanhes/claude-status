@@ -5,6 +5,7 @@ import Soup from 'gi://Soup?version=3.0';
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 
+import * as Config from 'resource:///org/gnome/shell/misc/config.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -17,6 +18,12 @@ const SUBPROCESS_TIMEOUT_SECONDS = 25;
 const RETRY_BASE_SECONDS = 15;
 const RETRY_MAX_SECONDS = 120;
 const MAX_RETRIES = 5;
+
+// St.BoxLayout's `vertical` was replaced by `orientation` in GNOME 48.
+const SHELL_MAJOR = parseInt(Config.PACKAGE_VERSION.split('.')[0], 10);
+const VERTICAL_BOX = SHELL_MAJOR >= 48
+    ? {orientation: Clutter.Orientation.VERTICAL}
+    : {vertical: true};
 
 const STATUS_URL = 'https://status.claude.com/api/v2/status.json';
 const STATUS_PAGE_URL = 'https://status.claude.com';
@@ -118,7 +125,7 @@ function parseUsage(output) {
 const UsageCard = GObject.registerClass(
 class UsageCard extends St.BoxLayout {
     _init(title) {
-        super._init({vertical: true, style_class: 'claude-card', x_expand: true});
+        super._init({...VERTICAL_BOX, style_class: 'claude-card', x_expand: true});
 
         this.add_child(new St.Label({text: title, style_class: 'claude-card-title'}));
 

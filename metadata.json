@@ -3,7 +3,7 @@
   "gettext-domain": "claude-status@oakz.org",
   "name": "Claude Status",
   "description": "Shows Claude Code usage (session and weekly limits) in the GNOME top bar.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
   "url": "https://github.com/montanhes/claude-status",
   "version": 3
 }
